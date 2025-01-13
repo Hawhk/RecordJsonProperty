@@ -96,14 +96,14 @@ public class RecordJsonPropertyHandler implements IEditorActionDelegate {
 		for (int i = 0; i < fields.length; i++) {
 			String field = fields[i].trim();
 			if (!field.isEmpty() && !field.contains("@JsonProperty")) {
-				modifiedSource.append("\n    ");
+				modifiedSource.append("\n\t\t");
 				modifiedSource.append("@JsonProperty(required = true) ");
 				modifiedSource.append(field);
 				if (i < fields.length - 1) {
 					modifiedSource.append(",");
 				}
 			} else {
-				modifiedSource.append("\n    " + field);
+				modifiedSource.append("\n\t\t" + field);
 				if (i < fields.length - 1) {
 					modifiedSource.append(",");
 				}
