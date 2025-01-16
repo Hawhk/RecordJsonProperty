@@ -3,7 +3,9 @@ package recordjsonproperty.handlers;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.eclipse.jdt.core.IAnnotation;
 import org.eclipse.jdt.core.ICompilationUnit;
+import org.eclipse.jdt.core.IMethod;
 import org.eclipse.jdt.core.IType;
 import org.eclipse.jdt.core.JavaCore;
 import org.eclipse.jdt.core.JavaModelException;
@@ -23,7 +25,7 @@ public class RecordJsonPropertyHandler implements IEditorActionDelegate {
 	public void setActiveEditor(IAction action, IEditorPart targetEditor) {
 		this.editor = targetEditor;
 		if (action != null && editor != null) {
-			action.setEnabled(isRecordPresent());
+			action.setEnabled(shouldBeActive());
 		}
 	}
 
@@ -42,13 +44,13 @@ public class RecordJsonPropertyHandler implements IEditorActionDelegate {
 			ICompilationUnit unit = JavaCore.createCompilationUnitFrom(fileInput.getFile());
 
 			if (unit != null) {
-				String source = unit.getSource();
 				IType[] types = unit.getTypes();
 
 				for (IType type : types) {
 					if (type.isRecord()) {
-						addAnnotationsToRecord(unit, source, type);
-						break;
+						addAnnotationsToRecord(unit, type);
+					} else if (type.isClass()) {
+						addAnnotationsToClass(unit, type);
 					}
 				}
 			}
@@ -59,12 +61,63 @@ public class RecordJsonPropertyHandler implements IEditorActionDelegate {
 		}
 	}
 
-	private void addAnnotationsToRecord(ICompilationUnit unit, String source, IType type) throws Exception {
-		int startPos = source.indexOf("record " + type.getElementName());
-		if (startPos != -1) {
-			int openParen = source.indexOf('(', startPos);
+	private void addAnnotationsToRecord(ICompilationUnit unit, IType type) throws JavaModelException {
+		String start = getStart(type.getSource(), type.getElementName());
+		addAnnotations(unit, start);
+	}
+
+	private void addAnnotationsToClass(ICompilationUnit unit, IType type) throws JavaModelException {
+		IMethod jsonCreatorMethod = null;
+		for (IMethod method : type.getMethods()) {
+			jsonCreatorMethod = getIfJsonCreator(method);
+			if (jsonCreatorMethod != null) {
+				String start = getStart(jsonCreatorMethod.getSource(), jsonCreatorMethod.getElementName());
+				addAnnotations(unit, start);
+				break;
+			}
+		}
+	}
+
+	private String getStart(String source, String elementName) {
+		int methodIndex = source.indexOf(elementName);
+		String start = source.substring(methodIndex);
+
+		int depth = 0;
+		boolean inAnnotation = false;
+
+		for (int i = 0; i < source.length(); i++) {
+			char c = source.charAt(i);
+
+			if (c == '@') {
+				inAnnotation = true;
+			} else if (inAnnotation && c == '(') {
+				depth++;
+
+			} else if (inAnnotation && c == ')') {
+				depth--;
+			} else if (inAnnotation && depth == 0 && Character.isWhitespace(c)) {
+				inAnnotation = false;
+			} else if (!inAnnotation && !Character.isWhitespace(c)) {
+				// Found start of actual field declaration
+				return source.substring(i).substring(methodIndex);
+			}
+
+			if (inAnnotation && depth == 0 && c == ')') {
+				inAnnotation = false;
+			}
+		}
+
+		return start;
+	}
+
+	private void addAnnotations(ICompilationUnit unit, String start) throws JavaModelException {
+
+		String source = unit.getSource();
+		int startPos = source.indexOf(start);
+		int openParen = source.indexOf('(', startPos);
+		if (openParen != -1) {
 			int closeParen = findClosingParenthesis(source, openParen);
-			if (openParen != -1 && closeParen != -1) {
+			if (closeParen != -1) {
 				String components = source.substring(openParen + 1, closeParen).trim();
 				String modifiedSource = addJsonPropertyAnnotations(source, openParen, components);
 
@@ -85,7 +138,20 @@ public class RecordJsonPropertyHandler implements IEditorActionDelegate {
 		}
 	}
 
+	private IMethod getIfJsonCreator(IMethod method) throws JavaModelException {
+		IMethod foundMethod = null;
+		for (IAnnotation annotation : method.getAnnotations()) {
+			if (annotation.getElementName().equals("JsonCreator")) {
+				foundMethod = method;
+				break;
+			}
+		}
+		return foundMethod;
+	}
+
 	private String addJsonPropertyAnnotations(String source, int openParen, String components) {
+
+		// get whitespace before the first non-whitespace character
 
 		String[] fields = splitTopLevelCommas(components);
 
@@ -94,7 +160,7 @@ public class RecordJsonPropertyHandler implements IEditorActionDelegate {
 
 		// Add each field with annotation
 		for (int i = 0; i < fields.length; i++) {
-			String field = fields[i].trim();
+			String field = fields[i];
 			if (!field.isEmpty() && !field.contains("@JsonProperty")) {
 				modifiedSource.append("\n\t\t");
 				modifiedSource.append("@JsonProperty(required = true) ");
@@ -107,7 +173,6 @@ public class RecordJsonPropertyHandler implements IEditorActionDelegate {
 				if (i < fields.length - 1) {
 					modifiedSource.append(",");
 				}
-				System.out.println("Skipping field: " + field);
 			}
 		}
 
@@ -127,11 +192,14 @@ public class RecordJsonPropertyHandler implements IEditorActionDelegate {
 
 		System.out.println("Splitting: " + input);
 
+		String beginingParams = "<{[(";
+		String endingParams = ">}])";
+
 		for (int i = 0; i < input.length(); i++) {
 			char c = input.charAt(i);
-			if (c == '<') {
+			if (beginingParams.indexOf(c) != -1) {
 				depth++;
-			} else if (c == '>') {
+			} else if (endingParams.indexOf(c) != -1) {
 				depth--;
 			} else if (c == ',' && depth == 0) {
 				// Only split when we're not inside angle brackets
@@ -148,7 +216,7 @@ public class RecordJsonPropertyHandler implements IEditorActionDelegate {
 		return result.toArray(new String[0]);
 	}
 
-	private boolean isRecordPresent() {
+	private boolean shouldBeActive() {
 		if (editor == null) {
 			return false;
 		}
@@ -158,7 +226,7 @@ public class RecordJsonPropertyHandler implements IEditorActionDelegate {
 				ICompilationUnit unit = JavaCore.createCompilationUnitFrom(fileInput.getFile());
 				if (unit != null) {
 					for (IType type : unit.getTypes()) {
-						if (type.isRecord()) {
+						if (type.isRecord() || type.isClass()) {
 							return true;
 						}
 					}
