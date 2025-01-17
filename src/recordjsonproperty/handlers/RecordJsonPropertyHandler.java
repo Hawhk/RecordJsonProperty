@@ -68,14 +68,44 @@ public class RecordJsonPropertyHandler implements IEditorActionDelegate {
 
 	private void addAnnotationsToClass(ICompilationUnit unit, IType type) throws JavaModelException {
 		IMethod jsonCreatorMethod = null;
-		for (IMethod method : type.getMethods()) {
+		IMethod[] methods = type.getMethods();
+
+		for (IMethod method : methods) {
 			jsonCreatorMethod = getIfJsonCreator(method);
 			if (jsonCreatorMethod != null) {
 				String start = getStart(jsonCreatorMethod.getSource(), jsonCreatorMethod.getElementName());
 				addAnnotations(unit, start);
-				break;
+				return;
 			}
 		}
+
+		if (methods.length == 1) {
+			jsonCreatorMethod = methods[0];
+			String source = addJsonCreatorAnnotation(unit, jsonCreatorMethod);
+			String start = getStart(source, jsonCreatorMethod.getElementName());
+			addAnnotations(unit, start);
+		} else if (methods.length > 1) {
+			MessageDialog.openError(editor.getSite().getShell(), "Error",
+					"Multiple methods found. Please add @JsonCreator annotation manually and try again.");
+		}
+
+	}
+
+	private String addJsonCreatorAnnotation(ICompilationUnit unit, IMethod jsonCreatorMethod)
+			throws JavaModelException {
+		String source = unit.getSource();
+		StringBuilder modifiedSource = new StringBuilder(
+				source.substring(0, source.indexOf(jsonCreatorMethod.getSource())));
+		modifiedSource.append("@JsonCreator\n\t");
+		modifiedSource.append(jsonCreatorMethod.getSource());
+		modifiedSource.append("\n\t");
+
+		// add the rest of class body
+		int endPos = source.indexOf("}", source.indexOf(jsonCreatorMethod.getSource()));
+		modifiedSource.append(source.substring(endPos + 1));
+		source = modifiedSource.toString();
+		unit.getBuffer().setContents(source);
+		return source;
 	}
 
 	private String getStart(String source, String elementName) {
