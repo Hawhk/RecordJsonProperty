@@ -31,7 +31,6 @@ public class RecordJsonPropertyHandler implements IEditorActionDelegate {
 
 	@Override
 	public void run(IAction action) {
-		System.out.println("Running RecordJsonPropertyHandler");
 		if (editor == null) {
 			return;
 		}
@@ -43,15 +42,12 @@ public class RecordJsonPropertyHandler implements IEditorActionDelegate {
 
 			IFileEditorInput fileInput = (IFileEditorInput) input;
 			ICompilationUnit unit = JavaCore.createCompilationUnitFrom(fileInput.getFile());
-			System.out.println("Unit: " + unit);
 			if (unit != null) {
 				IType[] types = unit.getTypes();
-				System.out.println("Types: " + types.length);
 				for (IType type : types) {
 					if (type.isRecord()) {
 						addAnnotationsToRecord(unit, type);
 					} else if (type.isClass()) {
-						System.out.println("Adding annotations to class: " + type.getElementName());
 						addAnnotationsToClass(unit, type);
 					}
 				}
@@ -69,21 +65,23 @@ public class RecordJsonPropertyHandler implements IEditorActionDelegate {
 	}
 
 	private void addAnnotationsToClass(ICompilationUnit unit, IType type) throws JavaModelException {
-		System.out.println("Adding annotations to class: " + type.getElementName());
 		IMethod jsonCreatorMethod = null;
 		IMethod[] methods = type.getMethods();
 
 		for (IMethod method : methods) {
-			jsonCreatorMethod = getIfJsonCreator(method);
+			IMethod temp = getIfJsonCreator(method);
 			if (jsonCreatorMethod != null) {
-				String start = getStart(jsonCreatorMethod.getSource(), jsonCreatorMethod.getElementName());
-				System.out.println("Start: " + start);
-				addAnnotations(unit, start);
+				MessageDialog.openError(editor.getSite().getShell(), "Error",
+						"Multiple methods annotated with @JsonCreator found. Please make sure there is only one and try again.");
 				return;
 			}
+			jsonCreatorMethod = temp;
 		}
 
-		if (methods.length == 1) {
+		if (jsonCreatorMethod != null) {
+			String start = getStart(jsonCreatorMethod.getSource(), jsonCreatorMethod.getElementName());
+			addAnnotations(unit, start);
+		} else if (methods.length == 1) {
 			jsonCreatorMethod = methods[0];
 			String source = addJsonCreatorAnnotation(unit, jsonCreatorMethod);
 			String start = getStart(source, jsonCreatorMethod.getElementName());
@@ -116,8 +114,6 @@ public class RecordJsonPropertyHandler implements IEditorActionDelegate {
 		int methodIndex = source.indexOf(elementName);
 		String start = source.substring(methodIndex);
 
-		System.out.println("Method index: " + methodIndex + " Start: " + start);
-
 		int depth = 0;
 		boolean inAnnotation = false;
 
@@ -134,11 +130,8 @@ public class RecordJsonPropertyHandler implements IEditorActionDelegate {
 			} else if (inAnnotation && depth == 0 && Character.isWhitespace(c)) {
 				inAnnotation = false;
 			} else if (!inAnnotation && !Character.isWhitespace(c)) {
-				// Found start of actual field declaration
 				String substring = source.substring(i);
-				System.out.println("Substring: " + substring);
-				methodIndex = substring.indexOf(elementName);
-				return substring.substring(methodIndex);
+				return substring.substring(substring.indexOf(elementName));
 			}
 
 			if (inAnnotation && depth == 0 && c == ')') {
